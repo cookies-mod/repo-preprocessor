@@ -20,11 +20,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import net.kyori.adventure.text.serializer.gson.GsonComponentSerializer;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 
@@ -46,8 +48,8 @@ public class Main {
         if (Files.notExists(out)) {
             Files.createDirectories(out);
         }
-        write(out.resolve("items.json"), items);
-        write(out.resolve("recipes.json"), recipes);
+        write(out.resolve("items.json5"), items);
+        write(out.resolve("recipes.json5"), recipes);
     }
 
     private <T, U, V> BiConsumer<T, V> processItem(ItemConsumer<T, V, U> function, U value, U recipes) {
@@ -93,9 +95,8 @@ public class Main {
     }
 
     private void write(Path path, JsonElement jsonElement) throws IOException {
-        Files.writeString(
-            path,
-            gson.toJson(jsonElement),
+        Files.writeString(path,
+            getLicense() + "\n" + gson.toJson(jsonElement),
             StandardCharsets.UTF_8,
             StandardOpenOption.CREATE,
             StandardOpenOption.TRUNCATE_EXISTING);
@@ -129,11 +130,9 @@ public class Main {
         JsonObject essence = new JsonObject();
         JsonObject values = new JsonObject();
         essence.addProperty("type", essenceCost.getType());
-        essenceCost.getEssenceCosts().forEach((integer, integer2) -> {
-            values.add(String.valueOf(integer),
-                new EssenceCostValue(integer2,
-                    essenceCost.getItemCosts().getOrDefault(integer, Collections.emptyList())).toObject());
-        });
+        essenceCost.getEssenceCosts().forEach((integer, integer2) -> values.add(String.valueOf(integer),
+            new EssenceCostValue(integer2,
+                essenceCost.getItemCosts().getOrDefault(integer, Collections.emptyList())).toObject()));
         essence.add("values", values);
         items.add("essence", essence);
     }
@@ -150,7 +149,9 @@ public class Main {
                 recipe.addProperty("duration", forgeRecipe.getDuration());
                 final JsonArray ingredients = new JsonArray();
                 for (NEUIngredient input : forgeRecipe.getInputs()) {
-                    if (input == NEUIngredient.SENTINEL_EMPTY) continue;
+                    if (input == NEUIngredient.SENTINEL_EMPTY) {
+                        continue;
+                    }
                     ingredients.add(formatIngredient(input));
                 }
                 recipe.add("ingredients", ingredients);
@@ -160,7 +161,9 @@ public class Main {
                 recipe.addProperty("type", "craft");
                 final JsonArray ingredients = new JsonArray();
                 for (NEUIngredient input : craftingRecipe.getInputs()) {
-                    if (input == NEUIngredient.SENTINEL_EMPTY) continue;
+                    if (input == NEUIngredient.SENTINEL_EMPTY) {
+                        continue;
+                    }
                     ingredients.add(formatIngredient(input));
                 }
                 recipe.add("ingredients", ingredients);
@@ -175,13 +178,23 @@ public class Main {
 
     private String formatIngredient(NEUIngredient ingredient) {
         if (ingredient.getAmount() > 1) {
-            return "%s:%s".formatted(ingredient.getItemId(), (int)ingredient.getAmount());
+            return "%s:%s".formatted(ingredient.getItemId(), (int) ingredient.getAmount());
         }
         return ingredient.getItemId();
     }
 
     public static void main(String[] args) throws NEURepositoryException, IOException {
         new Main();
+    }
+
+    private String getLicense() {
+        try {
+            final byte[] licenses = this.neuRepository.file("LICENSE").stream().readAllBytes();
+            final String licenseString = new String(licenses, StandardCharsets.UTF_8);
+            return Arrays.stream(licenseString.split("\n")).map("// %s"::formatted).collect(Collectors.joining("\n"));
+        } catch (IOException | NEURepositoryException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     interface ItemConsumer<T, U, V> {
