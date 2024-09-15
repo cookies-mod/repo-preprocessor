@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import io.github.moulberry.repo.NEURepository;
 import io.github.moulberry.repo.NEURepositoryException;
@@ -21,9 +22,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -50,14 +54,18 @@ public class Main {
         }
         write(out.resolve("items.json5"), items);
         write(out.resolve("recipes.json5"), recipes);
+        categories.forEach(System.out::println);
     }
 
     private <T, U, V> BiConsumer<T, V> processItem(ItemConsumer<T, V, U> function, U value, U recipes) {
         return (t, v) -> function.apply(t, v, value, recipes);
     }
 
+    private static Set<String> categories = new HashSet<>();
+
     private void processItem(String id, NEUItem neuItem, JsonArray items, JsonArray recipes) {
-        if (id.endsWith("NPC")) {
+        if (id.endsWith("NPC") || id.endsWith("MONSTER") || id.endsWith("MINIBOSS") || id.endsWith("BOSS")) {
+            System.out.println("Skipping " + id + " because it is a npc/monster");
             return;
         }
 
@@ -76,11 +84,17 @@ public class Main {
 
         item.addProperty("tier", lastLineSplit[0]);
         if (lastLineSplit.length > 1) {
-            item.addProperty("category", last.substring(lastLineSplit[0].length()).trim());
+            final String trim = last.substring(lastLineSplit[0].length()).trim();
+            categories.add(trim);
+            item.addProperty("category", trim);
         }
         addEssenceIfAvailable(id, item);
         item.addProperty("sackable", SackValues.canBeSacked(id));
         item.addProperty("museumable", MuseumValues.isMuseumable(id));
+
+        if (neuItem.getNbttag() != null) {
+            this.addSkin(item, neuItem.getNbttag());
+        }
 
         if (completeLore.contains("* Co-op Soulbound *")) {
             item.addProperty("soulboundtype", "COOP");
@@ -130,11 +144,25 @@ public class Main {
         JsonObject essence = new JsonObject();
         JsonObject values = new JsonObject();
         essence.addProperty("type", essenceCost.getType());
-        essenceCost.getEssenceCosts().forEach((integer, integer2) -> values.add(String.valueOf(integer),
-            new EssenceCostValue(integer2,
-                essenceCost.getItemCosts().getOrDefault(integer, Collections.emptyList())).toObject()));
+        essenceCost.getEssenceCosts()
+            .forEach((integer, integer2) -> values.add(String.valueOf(integer),
+                new EssenceCostValue(integer2,
+                    essenceCost.getItemCosts().getOrDefault(integer, Collections.emptyList())).toObject()));
         essence.add("values", values);
         items.add("essence", essence);
+    }
+
+    private void addSkin(JsonObject items, String nbttag) {
+        if (!nbttag.matches(".*Properties:\\{textures:\\[0:\\{Value:\"(.*?)\"}]}}.*")) {
+            return;
+        }
+        final String value = nbttag.replaceAll(".*Properties:\\{textures:\\[0:\\{Value:\"(.*?)\"}]}}.*", "$1");
+
+        try {
+            items.addProperty("skin", value);
+        } catch (Exception exception) {
+            System.err.println(exception.getMessage());
+        }
     }
 
     private <T, U, X> Consumer<T> processRecipe(RecipeConsumer<T, U, X> function, U value, X recipes) {
@@ -176,6 +204,16 @@ public class Main {
         }
     }
 
+    private String getLicense() {
+        try {
+            final byte[] licenses = this.neuRepository.file("LICENSE").stream().readAllBytes();
+            final String licenseString = new String(licenses, StandardCharsets.UTF_8);
+            return Arrays.stream(licenseString.split("\n")).map("// %s"::formatted).collect(Collectors.joining("\n"));
+        } catch (IOException | NEURepositoryException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private String formatIngredient(NEUIngredient ingredient) {
         if (ingredient.getAmount() > 1) {
             return "%s:%s".formatted(ingredient.getItemId(), (int) ingredient.getAmount());
@@ -185,16 +223,6 @@ public class Main {
 
     public static void main(String[] args) throws NEURepositoryException, IOException {
         new Main();
-    }
-
-    private String getLicense() {
-        try {
-            final byte[] licenses = this.neuRepository.file("LICENSE").stream().readAllBytes();
-            final String licenseString = new String(licenses, StandardCharsets.UTF_8);
-            return Arrays.stream(licenseString.split("\n")).map("// %s"::formatted).collect(Collectors.joining("\n"));
-        } catch (IOException | NEURepositoryException e) {
-            throw new RuntimeException(e);
-        }
     }
 
     interface ItemConsumer<T, U, V> {
